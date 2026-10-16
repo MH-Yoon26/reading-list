@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>읽을거리 목록</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #fff; --text: #1d2330; --muted: #6b7280;
+    --line: #e5e7eb; --accent: #2563eb; --done: #16a34a; --err: #dc2626;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #111318; --card: #1b1e25; --text: #e7e9ee; --muted: #9aa1ad;
+      --line: #2a2e37; --accent: #60a5fa; --done: #22c55e; --err: #f87171;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", sans-serif;
+    line-height: 1.5;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 24px 16px 48px; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 16px; }
+  h1 { font-size: 1.4rem; margin: 0; flex: 1 1 auto; }
+  .count { color: var(--muted); font-size: .9rem; font-weight: normal; margin-left: 6px; }
+  .controls { display: flex; gap: 8px; }
+  select, button {
+    font: inherit; font-size: .9rem; color: var(--text); background: var(--card);
+    border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; cursor: pointer;
+  }
+  ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+  li {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 14px 16px; display: flex; gap: 12px; align-items: flex-start;
+    transition: opacity .25s;
+  }
+  li.removing { opacity: .3; }
+  .body { flex: 1; min-width: 0; }
+  .date { color: var(--muted); font-size: .8rem; }
+  .title { font-weight: 600; font-size: 1.02rem; margin: 2px 0 4px; word-break: break-word; }
+  .title a { color: var(--accent); text-decoration: none; }
+  .title a:hover { text-decoration: underline; }
+  .summary { color: var(--muted); font-size: .9rem; white-space: pre-wrap; word-break: break-word; }
+  .done-btn {
+    flex: none; background: var(--done); border-color: var(--done); color: #fff; font-weight: 600;
+  }
+  .done-btn:disabled { opacity: .6; cursor: default; }
+  .status { text-align: center; color: var(--muted); padding: 40px 0; }
+  .status.error { color: var(--err); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>📚 읽을거리<span class="count" id="count"></span></h1>
+    <div class="controls">
+      <select id="sort" aria-label="정렬">
+        <option value="desc">날짜 내림차순 (최신순)</option>
+        <option value="asc">날짜 오름차순 (오래된순)</option>
+      </select>
+      <button id="refresh" title="새로고침">↻</button>
+    </div>
+  </header>
+  <div id="status" class="status">불러오는 중…</div>
+  <ul id="list"></ul>
+</div>
+
+<script>
+  // ▼▼▼ Apps Script 웹앱 배포 후 받은 URL로 바꿔 주세요 ▼▼▼
+  const API_URL = 'https://script.google.com/macros/s/AKfycbyS_QyP-SEaF7HJ-i1n_VZQ-gkynVAYdMaktplw6O3F_FKXkcfyR1-jmLlldtWuYByEaw/exec';
+
+  let items = [];
+  const $list = document.getElementById('list');
+  const $status = document.getElementById('status');
+  const $count = document.getElementById('count');
+  const $sort = document.getElementById('sort');
+
+  try { $sort.value = localStorage.getItem('sortOrder') || 'desc'; } catch (e) {}
+  $sort.addEventListener('change', () => {
+    try { localStorage.setItem('sortOrder', $sort.value); } catch (e) {}
+    render();
+  });
+  document.getElementById('refresh').addEventListener('click', load);
+
+  async function load() {
+    setStatus('불러오는 중…');
+    $list.innerHTML = '';
+    try {
+      const res = await fetch(API_URL + '?action=list');
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error);
+      items = data.items;
+      render();
+    } catch (err) {
+      setStatus('불러오기 실패: ' + err.message, true);
+    }
+  }
+
+  function render() {
+    const dir = $sort.value === 'asc' ? 1 : -1;
+    const sorted = items.slice().sort((a, b) => {
+      // 날짜가 없는 항목은 항상 맨 뒤
+      if (a.ts == null && b.ts == null) return 0;
+      if (a.ts == null) return 1;
+      if (b.ts == null) return -1;
+      return (a.ts - b.ts) * dir || (a.row - b.row) * dir;
+    });
+
+    $count.textContent = `(${items.length})`;
+    if (!sorted.length) { setStatus('읽을 글이 없습니다 🎉'); $list.innerHTML = ''; return; }
+    setStatus('');
+
+    $list.innerHTML = sorted.map(it => `
+      <li data-row="${it.row}">
+        <div class="body">
+          <div class="date">${esc(it.date) || '날짜 없음'}</div>
+          <div class="title">${
+            safeUrl(it.url)
+              ? `<a href="${esc(it.url)}" target="_blank" rel="noopener">${esc(it.title || it.url)}</a>`
+              : esc(it.title || '(제목 없음)')
+          }</div>
+          ${it.summary ? `<div class="summary">${esc(it.summary)}</div>` : ''}
+        </div>
+        <button class="done-btn">완료</button>
+      </li>`).join('');
+
+    $list.querySelectorAll('.done-btn').forEach(btn => {
+      btn.addEventListener('click', () => complete(btn));
+    });
+  }
+
+  async function complete(btn) {
+    const li = btn.closest('li');
+    const row = Number(li.dataset.row);
+    const item = items.find(i => i.row === row);
+    if (!item || !confirm(`'${item.title}'\n완료 처리할까요?`)) return;
+
+    btn.disabled = true; btn.textContent = '처리 중…'; li.classList.add('removing');
+    try {
+      const res = await fetch(API_URL, {
+        method: 'POST',
+        // text/plain 으로 보내야 CORS 사전요청(preflight) 없이 Apps Script에 전달됩니다
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ action: 'complete', row: item.row, title: item.title, url: item.url }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error);
+      await load(); // 행 번호가 바뀌므로 목록을 다시 불러옴
+    } catch (err) {
+      alert('완료 처리 실패: ' + err.message);
+      btn.disabled = false; btn.textContent = '완료'; li.classList.remove('removing');
+    }
+  }
+
+  function setStatus(msg, isError) {
+    $status.textContent = msg;
+    $status.style.display = msg ? '' : 'none';
+    $status.classList.toggle('error', !!isError);
+  }
+  function esc(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+  function safeUrl(u) { return /^https?:\/\//i.test(u || ''); }
+
+  load();
+</script>
+</body>
+</html>
