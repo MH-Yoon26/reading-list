@@ -66,6 +66,16 @@
   .hint { font-size: .8rem; color: var(--muted); margin-top: -4px; }
   .hint.error { color: var(--err); }
   .form-actions { display: flex; justify-content: flex-end; gap: 8px; }
+  .clip-guide {
+    margin-top: 28px; padding: 12px 16px; border: 1px dashed var(--line); border-radius: 12px;
+    font-size: .88rem; color: var(--muted);
+  }
+  .clip-guide summary { cursor: pointer; font-weight: 600; color: var(--text); }
+  .clip-guide p { margin: 8px 0; }
+  .bm-btn {
+    display: inline-block; padding: 6px 12px; border-radius: 8px; background: #7c3aed;
+    color: #fff; font-weight: 600; text-decoration: none; cursor: grab;
+  }
   .status { text-align: center; color: var(--muted); padding: 40px 0; }
   .status.error { color: var(--err); }
 </style>
@@ -101,6 +111,14 @@
   </form>
   <div id="status" class="status">불러오는 중…</div>
   <ul id="list"></ul>
+
+  <details class="clip-guide">
+    <summary>📌 PC에서 보던 글 바로 저장하기 (북마클릿)</summary>
+    <p>① 아래 보라색 버튼을 브라우저의 <b>즐겨찾기 막대</b>로 끌어다 놓으세요. (막대가 안 보이면 <b>Ctrl + Shift + B</b>)</p>
+    <p><a id="bookmarklet" class="bm-btn" href="#">📚 읽을거리에 추가</a></p>
+    <p>② 저장하고 싶은 글을 보다가 즐겨찾기의 <b>📚 읽을거리에 추가</b>를 누르면 작은 창이 열리고 AI가 제목과 요약을 채워 줘요. 확인하고 <b>저장</b>을 누르면 창이 닫혀요.</p>
+    <p>💡 글의 일부를 마우스로 선택한 뒤 누르면 선택한 부분을 기준으로 요약해요. 지금 보고 있는 화면에서 내용을 가져오기 때문에, 봇 차단 사이트도 저장할 수 있어요.</p>
+  </details>
 </div>
 
 <script>
@@ -121,24 +139,27 @@
   document.getElementById('refresh').addEventListener('click', load);
 
   const $form = document.getElementById('addForm');
+  function openForm() {
+    $form.hidden = false;
+    if (!$form.date.value) $form.date.value = today();
+  }
   document.getElementById('toggleAdd').addEventListener('click', () => {
-    $form.hidden = !$form.hidden;
-    if (!$form.hidden) {
-      if (!$form.date.value) $form.date.value = today();
-      $form.url.focus();
-    }
+    if ($form.hidden) { openForm(); $form.url.focus(); } else { $form.hidden = true; }
   });
 
   const $autoFill = document.getElementById('autoFill');
   const $hint = document.getElementById('autoHint');
-  $autoFill.addEventListener('click', async () => {
+  $autoFill.addEventListener('click', () => runAutoFill());
+
+  // page: 북마클릿이 보낸 {title, description, text}. 없으면 서버가 URL에서 직접 가져옴
+  async function runAutoFill(page) {
     const url = $form.url.value.trim();
     if (!/^https?:\/\//i.test(url)) { setHint('http:// 또는 https:// 로 시작하는 URL을 먼저 입력하세요.', true); return; }
 
     $autoFill.disabled = true; $autoFill.textContent = '읽는 중…';
     setHint('AI가 글을 읽고 요약하고 있어요. 10~30초 정도 걸릴 수 있어요.');
     try {
-      const data = await post({ action: 'analyze', url });
+      const data = await post({ action: 'analyze', url, page });
       $form.elements.title.value = data.title || '';
       $form.summary.value = data.summary || '';
       setHint('채워진 내용을 확인하고, 필요하면 고친 뒤 저장하세요.');
@@ -147,7 +168,7 @@
     } finally {
       $autoFill.disabled = false; $autoFill.textContent = '✨ 자동 채우기';
     }
-  });
+  }
   function setHint(msg, isError) {
     $hint.textContent = msg;
     $hint.classList.toggle('error', !!isError);
@@ -172,6 +193,11 @@
     try {
       await post(payload);
       $form.reset(); $form.hidden = true;
+      if (clipMode) { // 북마클릿 창이면 저장 후 닫기
+        setStatus('저장했어요! 창이 곧 닫힙니다.');
+        setTimeout(() => window.close(), 1200);
+        return;
+      }
       await load();
     } catch (err) {
       alert('추가 실패: ' + err.message);
@@ -285,6 +311,50 @@
       ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   }
   function safeUrl(u) { return /^https?:\/\//i.test(u || ''); }
+
+  /* ───── 북마클릿 ───── */
+
+  // 다른 사이트에서 실행되는 코드: 지금 보고 있는 글의 제목·본문을 모아 이 웹앱 창으로 보냄
+  function bookmarkletHref() {
+    const app = location.origin + location.pathname;
+    const code = `(function(){
+      var APP=${JSON.stringify(app)},ORIGIN=${JSON.stringify(location.origin)};
+      var meta=function(n){var m=document.querySelector('meta[property="'+n+'"],meta[name="'+n+'"]');return m?m.content:'';};
+      var sel=String(window.getSelection?window.getSelection():'').trim();
+      var root=document.querySelector('article')||document.querySelector('main')||document.body;
+      var data={type:'reading-clip',url:location.href,title:meta('og:title')||document.title,
+        description:meta('og:description')||meta('description'),
+        text:(sel.length>100?sel:root.innerText).slice(0,40000)};
+      var w=window.open(APP+'?t='+Date.now()+'#clip','readingClip','width=560,height=820');
+      if(!w){alert('팝업이 차단되었습니다. 이 사이트의 팝업을 허용해 주세요.');return;}
+      var n=0,t=setInterval(function(){try{w.postMessage(data,ORIGIN);}catch(e){}if(++n>60)clearInterval(t);},250);
+      window.addEventListener('message',function(e){if(e.origin===ORIGIN&&e.data==='reading-clip-ack')clearInterval(t);});
+    })();`;
+    return 'javascript:' + encodeURIComponent(code.replace(/\n\s*/g, ''));
+  }
+  const $bm = document.getElementById('bookmarklet');
+  $bm.href = bookmarkletHref();
+  $bm.addEventListener('click', (e) => {
+    e.preventDefault();
+    alert('이 버튼은 누르는 게 아니라 즐겨찾기 막대로 끌어다 놓는 버튼이에요.');
+  });
+
+  // 북마클릿이 연 창(#clip)이면 글 정보를 받아 폼을 채우고 바로 요약
+  const clipMode = location.hash === '#clip';
+  if (clipMode) {
+    openForm();
+    setHint('글 정보를 받는 중…');
+    let received = false;
+    window.addEventListener('message', (e) => {
+      const d = e.data;
+      if (received || !d || d.type !== 'reading-clip') return;
+      received = true;
+      try { e.source.postMessage('reading-clip-ack', '*'); } catch (err) {}
+      $form.url.value = d.url || '';
+      $form.elements.title.value = d.title || '';
+      runAutoFill({ title: d.title, description: d.description, text: d.text });
+    });
+  }
 
   load();
 </script>
