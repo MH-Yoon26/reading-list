@@ -43,6 +43,11 @@
   .title a { color: var(--accent); text-decoration: none; }
   .title a:hover { text-decoration: underline; }
   .summary { color: var(--muted); font-size: .9rem; white-space: pre-wrap; word-break: break-word; }
+  .tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .tag {
+    font-size: .72rem; color: var(--muted); background: var(--bg);
+    border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px;
+  }
   .done-btn {
     flex: none; background: var(--done); border-color: var(--done); color: #fff; font-weight: 600;
   }
@@ -104,6 +109,7 @@
     <label>날짜 <input type="date" name="date" required></label>
     <label>제목 <input type="text" name="title" placeholder="글 제목"></label>
     <label>주요내용 <textarea name="summary" placeholder="간단한 메모 (선택)"></textarea></label>
+    <label>키워드 <input type="text" name="keywords" placeholder="쉼표로 구분 (나중에 검색할 때 사용)"></label>
     <div class="form-actions">
       <button type="button" id="cancelAdd">취소</button>
       <button type="submit" class="add-btn" id="submitAdd">저장</button>
@@ -162,6 +168,7 @@
       const data = await post({ action: 'analyze', url, page });
       $form.elements.title.value = data.title || '';
       $form.summary.value = data.summary || '';
+      $form.keywords.value = data.keywords || '';
       setHint('채워진 내용을 확인하고, 필요하면 고친 뒤 저장하세요.');
     } catch (err) {
       setHint('자동 채우기 실패: ' + err.message, true);
@@ -185,6 +192,7 @@
       title: $form.elements.title.value.trim(),
       url: $form.url.value.trim(),
       summary: $form.summary.value.trim(),
+      keywords: $form.keywords.value.trim(),
     };
     if (!payload.title && !payload.url) { alert('제목 또는 URL을 입력하세요.'); return; }
 
@@ -244,6 +252,8 @@
               : esc(it.title || '(제목 없음)')
           }</div>
           ${it.summary ? `<div class="summary">${esc(it.summary)}</div>` : ''}
+          ${it.keywords ? `<div class="tags">${it.keywords.split(',').map(k => k.trim()).filter(Boolean)
+              .map(k => `<span class="tag">${esc(k)}</span>`).join('')}</div>` : ''}
         </div>
         <button class="done-btn">완료</button>
       </li>`).join('');
