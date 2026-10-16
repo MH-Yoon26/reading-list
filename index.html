@@ -25,7 +25,7 @@
   header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 16px; }
   h1 { font-size: 1.4rem; margin: 0; flex: 1 1 auto; }
   .count { color: var(--muted); font-size: .9rem; font-weight: normal; margin-left: 6px; }
-  .controls { display: flex; gap: 8px; }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; }
   select, button {
     font: inherit; font-size: .9rem; color: var(--text); background: var(--card);
     border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; cursor: pointer;
@@ -47,6 +47,19 @@
     flex: none; background: var(--done); border-color: var(--done); color: #fff; font-weight: 600;
   }
   .done-btn:disabled { opacity: .6; cursor: default; }
+  .add-btn { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  form {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 16px; margin-bottom: 16px; display: grid; gap: 10px;
+  }
+  form[hidden] { display: none; }
+  label { display: grid; gap: 4px; font-size: .85rem; color: var(--muted); }
+  input, textarea {
+    font: inherit; font-size: .95rem; color: var(--text); background: var(--bg);
+    border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; width: 100%;
+  }
+  textarea { min-height: 72px; resize: vertical; }
+  .form-actions { display: flex; justify-content: flex-end; gap: 8px; }
   .status { text-align: center; color: var(--muted); padding: 40px 0; }
   .status.error { color: var(--err); }
 </style>
@@ -61,15 +74,26 @@
         <option value="asc">날짜 오름차순 (오래된순)</option>
       </select>
       <button id="refresh" title="새로고침">↻</button>
+      <button id="toggleAdd" class="add-btn">+ 추가</button>
     </div>
   </header>
+  <form id="addForm" hidden>
+    <label>날짜 <input type="date" name="date" required></label>
+    <label>제목 <input type="text" name="title" placeholder="글 제목"></label>
+    <label>URL <input type="url" name="url" placeholder="https://"></label>
+    <label>주요내용 <textarea name="summary" placeholder="간단한 메모 (선택)"></textarea></label>
+    <div class="form-actions">
+      <button type="button" id="cancelAdd">취소</button>
+      <button type="submit" class="add-btn" id="submitAdd">저장</button>
+    </div>
+  </form>
   <div id="status" class="status">불러오는 중…</div>
   <ul id="list"></ul>
 </div>
 
 <script>
   // ▼▼▼ Apps Script 웹앱 배포 후 받은 URL로 바꿔 주세요 ▼▼▼
-  const API_URL = 'https://script.google.com/macros/s/AKfycbyS_QyP-SEaF7HJ-i1n_VZQ-gkynVAYdMaktplw6O3F_FKXkcfyR1-jmLlldtWuYByEaw/exec';
+  const API_URL = 'https://script.google.com/macros/s/여기에_배포_ID/exec';
 
   let items = [];
   const $list = document.getElementById('list');
@@ -83,6 +107,41 @@
     render();
   });
   document.getElementById('refresh').addEventListener('click', load);
+
+  const $form = document.getElementById('addForm');
+  document.getElementById('toggleAdd').addEventListener('click', () => {
+    $form.hidden = !$form.hidden;
+    if (!$form.hidden) {
+      if (!$form.date.value) $form.date.value = today();
+      $form.title.focus();
+    }
+  });
+  document.getElementById('cancelAdd').addEventListener('click', () => {
+    $form.reset(); $form.hidden = true;
+  });
+  $form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const payload = {
+      action: 'add',
+      date: $form.date.value,
+      title: $form.title.value.trim(),
+      url: $form.url.value.trim(),
+      summary: $form.summary.value.trim(),
+    };
+    if (!payload.title && !payload.url) { alert('제목 또는 URL을 입력하세요.'); return; }
+
+    const $btn = document.getElementById('submitAdd');
+    $btn.disabled = true; $btn.textContent = '저장 중…';
+    try {
+      await post(payload);
+      $form.reset(); $form.hidden = true;
+      await load();
+    } catch (err) {
+      alert('추가 실패: ' + err.message);
+    } finally {
+      $btn.disabled = false; $btn.textContent = '저장';
+    }
+  });
 
   async function load() {
     setStatus('불러오는 중…');
@@ -139,19 +198,29 @@
 
     btn.disabled = true; btn.textContent = '처리 중…'; li.classList.add('removing');
     try {
-      const res = await fetch(API_URL, {
-        method: 'POST',
-        // text/plain 으로 보내야 CORS 사전요청(preflight) 없이 Apps Script에 전달됩니다
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ action: 'complete', row: item.row, title: item.title, url: item.url }),
-      });
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error);
+      await post({ action: 'complete', row: item.row, title: item.title, url: item.url });
       await load(); // 행 번호가 바뀌므로 목록을 다시 불러옴
     } catch (err) {
       alert('완료 처리 실패: ' + err.message);
       btn.disabled = false; btn.textContent = '완료'; li.classList.remove('removing');
     }
+  }
+
+  async function post(payload) {
+    const res = await fetch(API_URL, {
+      method: 'POST',
+      // text/plain 으로 보내야 CORS 사전요청(preflight) 없이 Apps Script에 전달됩니다
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error);
+    return data;
+  }
+
+  function today() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   }
 
   function setStatus(msg, isError) {
